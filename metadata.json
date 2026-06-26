@@ -1,0 +1,6 @@
+{
+  "name": "Mapa Mental PWA",
+  "description": "Um aplicativo de mapas mentais rápido, leve, offline e instalável (PWA) com editor de texto em tempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
