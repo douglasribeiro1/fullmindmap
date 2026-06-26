@@ -248,31 +248,6 @@ export default function MindMapCanvas({
     );
   };
 
-  // Mouse Wheel Zoom
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    // Zoom speed
-    const zoomFactor = 1.1;
-    let nextZoom = zoom;
-    if (e.deltaY < 0) {
-      nextZoom = Math.min(3, zoom * zoomFactor);
-    } else {
-      nextZoom = Math.max(0.15, zoom / zoomFactor);
-    }
-
-    // Zoom centering relative to cursor position
-    const worldPos = screenToWorld(mouseX, mouseY);
-    setZoom(nextZoom);
-    setPanX(mouseX - worldPos.x * nextZoom);
-    setPanY(mouseY - worldPos.y * nextZoom);
-  };
 
   // Mouse Down handler
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -481,6 +456,40 @@ export default function MindMapCanvas({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedNodeIds, canPaste]);
+
+  // Non-passive Wheel event listener registered manually to prevent passive browser warnings
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Zoom speed
+      const zoomFactor = 1.1;
+      let nextZoom = zoom;
+      if (e.deltaY < 0) {
+        nextZoom = Math.min(3, zoom * zoomFactor);
+      } else {
+        nextZoom = Math.max(0.15, zoom / zoomFactor);
+      }
+
+      // Zoom centering relative to cursor position
+      const worldX = (mouseX - panX) / zoom;
+      const worldY = (mouseY - panY) / zoom;
+      setZoom(nextZoom);
+      setPanX(mouseX - worldX * nextZoom);
+      setPanY(mouseY - worldY * nextZoom);
+    };
+
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+    };
+  }, [zoom, panX, panY]);
 
   // RENDER DRAWING LOOP ON CANVAS
   useEffect(() => {
@@ -1105,7 +1114,6 @@ export default function MindMapCanvas({
       {/* Absolute floating canvas */}
       <canvas
         ref={canvasRef}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
