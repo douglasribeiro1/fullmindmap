@@ -143,7 +143,23 @@ export default function App() {
 
     // 2.4 Update states
     setNodes(positioned);
-    setMetadata(updatedMetadata);
+    
+    // Avoid infinite loop by only updating metadata state if key structures have changed
+    const keys1 = Object.keys(metadata);
+    const keys2 = Object.keys(updatedMetadata);
+    let keysChanged = keys1.length !== keys2.length;
+    if (!keysChanged) {
+      for (const k of keys1) {
+        if (!updatedMetadata[k]) {
+          keysChanged = true;
+          break;
+        }
+      }
+    }
+    if (keysChanged) {
+      setMetadata(updatedMetadata);
+    }
+    
     prevNodesRef.current = positioned;
 
     // 2.5 Auto-save work to LocalStorage
@@ -171,7 +187,7 @@ export default function App() {
       rootClass.remove("dark", "high-contrast");
     }
 
-  }, [text, layout, config]);
+  }, [text, layout, config, metadata]);
 
   // 3. SEARCH ENGINE IMPLEMENTATION
   useEffect(() => {

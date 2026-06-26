@@ -99,8 +99,9 @@ export default function MindMapCanvas({
       const canvas = canvasRef.current;
       const container = containerRef.current;
       if (canvas && container) {
-        canvas.width = container.clientWidth;
-        canvas.height = container.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = container.clientWidth * dpr;
+        canvas.height = container.clientHeight * dpr;
       }
     };
 
@@ -129,13 +130,17 @@ export default function MindMapCanvas({
     const mapCenterX = minX + mapWidth / 2;
     const mapCenterY = minY + mapHeight / 2;
 
-    const scaleX = (canvas.width * 0.8) / mapWidth;
-    const scaleY = (canvas.height * 0.8) / mapHeight;
+    // Use client dimensions (logical size) for centering math
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+
+    const scaleX = (width * 0.8) / mapWidth;
+    const scaleY = (height * 0.8) / mapHeight;
     const nextZoom = Math.max(0.3, Math.min(1.5, Math.min(scaleX, scaleY)));
 
     setZoom(nextZoom);
-    setPanX(canvas.width / 2 - mapCenterX * nextZoom);
-    setPanY(canvas.height / 2 - mapCenterY * nextZoom);
+    setPanX(width / 2 - mapCenterX * nextZoom);
+    setPanY(height / 2 - mapCenterY * nextZoom);
   };
 
   // Center on mount once if loaded
@@ -501,13 +506,20 @@ export default function MindMapCanvas({
     let animId: number;
 
     const draw = () => {
+      const dpr = window.devicePixelRatio || 1;
       ctx.save();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+
+      const logicalWidth = canvas.width / dpr;
+      const logicalHeight = canvas.height / dpr;
+
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
 
       // Draw beautiful grid background
-      drawGrid(ctx, canvas.width, canvas.height);
+      drawGrid(ctx, logicalWidth, logicalHeight);
 
-      // Apply zoom & pan camera transformations
+      // Apply zoom & pan camera transformations (within nested save/restore to separate from DPR scale)
+      ctx.save();
       ctx.translate(panX, panY);
       ctx.scale(zoom, zoom);
 
@@ -564,10 +576,12 @@ export default function MindMapCanvas({
         ctx.stroke();
       }
 
-      ctx.restore();
+      ctx.restore(); // Restores the camera viewport scale and translation
 
-      // 6. DRAW VISUAL MINI-MAP IN THE BOTTOM RIGHT
-      drawMiniMap(ctx, canvas.width, canvas.height, collapsedNodeIds);
+      // 6. DRAW VISUAL MINI-MAP IN THE BOTTOM RIGHT USING LOGICAL DIMENSIONS
+      drawMiniMap(ctx, logicalWidth, logicalHeight, collapsedNodeIds);
+
+      ctx.restore(); // Restores the device pixel ratio scale
 
       animId = requestAnimationFrame(draw);
     };
@@ -642,6 +656,47 @@ export default function MindMapCanvas({
     };
 
     const drawExtraLinks = (c: CanvasRenderingContext2D, hidden: Set<string>) => {
+      // Helper to find intersection of the line from node center to target point (ox, oy) with the node's bounding box
+      const getBoxIntersection = (
+        node: { x: number; y: number; width: number; height: number },
+        ox: number,
+        oy: number
+      ): { x: number; y: number } => {
+        const cx = node.x + node.width / 2;
+        const cy = node.y + node.height / 2;
+        
+        const dx = ox - cx;
+        const dy = oy - cy;
+        
+        if (dx === 0 && dy === 0) {
+          return { x: cx, y: cy };
+        }
+        
+        const w2 = node.width / 2;
+        const h2 = node.height / 2;
+        
+        let tx = Infinity;
+        let ty = Infinity;
+        
+        if (dx > 0) {
+          tx = w2 / dx;
+        } else if (dx < 0) {
+          tx = -w2 / dx;
+        }
+        
+        if (dy > 0) {
+          ty = h2 / dy;
+        } else if (dy < 0) {
+          ty = -h2 / dy;
+        }
+        
+        const t = Math.min(1, Math.min(tx, ty));
+        return {
+          x: cx + dx * t,
+          y: cy + dy * t
+        };
+      };
+
       extraLinks.forEach(link => {
         if (hidden.has(link.fromId) || hidden.has(link.toId)) return;
         const fromNode = nodeMap.get(link.fromId);
@@ -653,36 +708,42 @@ export default function MindMapCanvas({
         c.lineWidth = link.thickness || 2;
         c.fillStyle = link.color || (config.theme === "dark" ? "#ffffff" : "#1a1a1a");
 
-        const startX = fromNode.x + fromNode.width / 2;
-        const startY = fromNode.y + fromNode.height / 2;
-        const endX = toNode.x + toNode.width / 2;
-        const endY = toNode.y + toNode.height / 2;
+        const fromCenter = { x: fromNode.x + fromNode.width / 2, y: fromNode.y + fromNode.height / 2 };
+        const toCenter = { x: toNode.x + toNode.width / 2, y: toNode.y + toNode.height / 2 };
 
         c.beginPath();
         if (link.style === "curved") {
-          // Curved connector - quadratic curve with control point shifted perpendicular to midpoint
-          const midX = (startX + endX) / 2;
-          const midY = (startY + endY) / 2;
-          // Perpendicular offset vector
-          const dx = endX - startX;
-          const dy = endY - startY;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const nx = -dy / len;
-          const ny = dx / len;
-          const offset = Math.min(len * 0.25, 60);
+          // 1. Calculate control point first using center-to-center line
+          const midX = (fromCenter.x + toCenter.x) / 2;
+          const midY = (fromCenter.y + toCenter.y) / 2;
           
-          const cpX = midX + nx * offset;
-          const cpY = midY + ny * offset;
+          const dx = toCenter.x - fromCenter.x;
+          const dy = toCenter.y - fromCenter.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          
+          let cpX = midX;
+          let cpY = midY;
+          
+          if (len > 0) {
+            const nx = -dy / len;
+            const ny = dx / len;
+            const offset = Math.min(len * 0.25, 60);
+            cpX = midX + nx * offset;
+            cpY = midY + ny * offset;
+          }
 
-          c.moveTo(startX, startY);
-          c.quadraticCurveTo(cpX, cpY, endX, endY);
+          // 2. Intersect curve's entry vectors with node borders
+          const start = getBoxIntersection(fromNode, cpX, cpY);
+          const end = getBoxIntersection(toNode, cpX, cpY);
+
+          c.moveTo(start.x, start.y);
+          c.quadraticCurveTo(cpX, cpY, end.x, end.y);
           c.stroke();
 
-          // Draw arrowhead if specified
+          // Draw arrowhead if specified at the border endpoint
           if (link.hasArrow) {
-            // Angle near target
-            const angle = Math.atan2(endY - cpY, endX - cpX);
-            drawArrowhead(c, endX, endY, angle, link.thickness);
+            const angle = Math.atan2(end.y - cpY, end.x - cpX);
+            drawArrowhead(c, end.x, end.y, angle, link.thickness);
           }
 
           // Draw label if present
@@ -694,20 +755,23 @@ export default function MindMapCanvas({
 
         } else {
           // Straight line
-          c.moveTo(startX, startY);
-          c.lineTo(endX, endY);
+          const start = getBoxIntersection(fromNode, toCenter.x, toCenter.y);
+          const end = getBoxIntersection(toNode, fromCenter.x, fromCenter.y);
+
+          c.moveTo(start.x, start.y);
+          c.lineTo(end.x, end.y);
           c.stroke();
 
           if (link.hasArrow) {
-            const angle = Math.atan2(endY - startY, endX - startX);
-            drawArrowhead(c, endX, endY, angle, link.thickness);
+            const angle = Math.atan2(end.y - start.y, end.x - start.x);
+            drawArrowhead(c, end.x, end.y, angle, link.thickness);
           }
 
           if (link.label) {
             c.font = `10px ${config.fontFamily}`;
             c.fillStyle = config.theme === "dark" ? "#e2e8f0" : "#1a1a1a";
-            const midX = (startX + endX) / 2;
-            const midY = (startY + endY) / 2;
+            const midX = (start.x + end.x) / 2;
+            const midY = (start.y + end.y) / 2;
             c.fillText(link.label, midX, midY - 4);
           }
         }
