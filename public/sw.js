@@ -3,10 +3,8 @@ const ASSETS = [
   "/",
   "/index.html",
   "/manifest.json",
-  "/src/main.tsx",
-  "/src/App.tsx",
-  "/src/index.css",
-  "/metadata.json"
+  "/favicon.svg",
+  "/favicon.ico"
 ];
 
 // Install Service Worker and cache all vital assets
